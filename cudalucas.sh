@@ -77,6 +77,7 @@ if [[ -e ../primenet.py ]]; then
 else
 	wget https://raw.github.com/tdulcet/Distributed-Computing-Scripts/master/primenet.py -nv
 fi
+python3 -m pip install --upgrade pip
 if command -v pip3 >/dev/null; then
 	echo -e "\nInstalling the Requests library\n"
 	pip3 install requests
@@ -151,8 +152,8 @@ sleep 1
 echo -e "\nOptimizing CUDALucas for your computer and GPU\nThis may take a while…\n"
 ./CUDALucas -cufftbench 1024 8192 5
 ./CUDALucas -threadbench 1024 8192 5 0
-# echo -e "\nRunning self tests\nThis will take a while…\n"
-# ./CUDALucas -r 1
+echo -e "\nRunning self tests\nThis will take a while…\n"
+./CUDALucas -r 1
 # ./CUDALucas 6972593
 echo -e "\nStarting CUDALucas\n"
 nohup nice ./CUDALucas -d $DEVICE >> "cudalucas.out" &

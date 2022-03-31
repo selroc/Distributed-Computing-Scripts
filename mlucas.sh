@@ -8,7 +8,7 @@
 
 DIR="mlucas_v20.1.1"
 FILE="mlucas_v20.1.1.txz"
-SUM="c917eb8faa6ff643d359b335cdacbfda"
+SUM="888c95d3289d3b49a7c9cdba8aeab9b9"
 if [[ $# -gt 4 ]]; then
 	echo "Usage: $0 [PrimeNet User ID] [Computer name] [Type of work] [Idle time to run (mins)]" >&2
 	exit 1
@@ -18,7 +18,7 @@ COMPUTER=${2:-$HOSTNAME}
 TYPE=${3:-150}
 TIME=${4:-10}
 decimal_point=$(locale decimal_point)
-RE='^(4|1(0[0124]|5[0123]))$'
+RE='^(4|1(0[0124]|5[01234]))$'
 if ! [[ $TYPE =~ $RE ]]; then
 	echo "Usage: [Type of work] must be a number" >&2
 	exit 1
@@ -206,6 +206,7 @@ else
 		wget https://raw.github.com/tdulcet/Distributed-Computing-Scripts/master/primenet.py -nv
 	fi
 fi
+python3 -m pip install --upgrade pip
 if command -v pip3 >/dev/null; then
 	echo -e "\nInstalling the Requests library\n"
 	pip3 install requests
@@ -343,14 +344,14 @@ else
 		ARGS+=( "${args[*]}" )
 	done
 fi
-echo "Combinations of CPU cores/threads"
+echo "Combinations of CPU cores/threads to benchmark"
 {
 	echo -e "#\tWorkers/Runs\tThreads\t-cpu arguments"
 	for i in "${!ARGS[@]}"; do
 		args=( ${ARGS[i]} )
 		printf "%'d\t%'d\t%s\t%s\n" $((i+1)) ${#args[*]} "${THREADS[i]// /, }" "${args[*]}"
 	done
-} | column -t -s $'\t'
+} | column -t -s $'\t' | tee -a bench.txt
 echo
 # https://www.mersenneforum.org/showpost.php?p=569485&postcount=71
 TIMES=()
@@ -433,23 +434,38 @@ for i in "${!ARGS[@]}"; do
 	mapfile -t ffts <<< "${FFTS[i]}"
 	mapfile -t aradices <<< "${RADICES[i]}"
 	iters=()
-	printf "\n#%'d\tThreads: %s\n" $((i+1)) "${THREADS[i]// /, }"
+	printf "\n#%'d\tWorkers/Runs: %'d\tThreads: %s\n" $((i+1)) ${#args[*]} "${THREADS[i]// /, }"
+	echo "[$(date)]" >> bench.txt
 	for j in "${!ffts[@]}"; do
-		printf '\n\tFFT length: %sK\n\n' "${ffts[j]}"
+		printf '\n\tTiming FFT length: %sK\n\n' "${ffts[j]}"
 		radices=( ${aradices[j]} )
 		for k in "${!args[@]}"; do
 			./Mlucas -fft "${ffts[j]}" -iters 1000 -radset "${radices[${#threads[*]}==1 || (threads[0]<threads[1] && k==0) || (threads[0]>threads[1] && k<${#args[*]}-1) ? 0 : 1]}" -cpu "${args[k]}" >& "${files[k]}" &
 		done
 		wait
-		grep -ih 'error\|warn\||assert\|clocks' "${files[@]::${#args[*]}}"
+		grep -ih 'error\|warn\|assert\|clocks' "${files[@]::${#args[*]}}"
 		if grep -iq 'fatal' "${files[@]::${#args[*]}}"; then
+			echo
 			for k in "${!args[@]}"; do
 				./Mlucas -fft "${ffts[j]}" -iters 1000 -radset "${radices[${#threads[*]}==1 || (threads[0]<threads[1] && k==0) || (threads[0]>threads[1] && k<${#args[*]}-1) ? 0 : 1]}" -cpu "${args[k]}" -shift $RANDOM >& "${files[k]}" &
 			done
 			wait
-			grep -ih 'error\|warn\||assert\|clocks' "${files[@]::${#args[*]}}"
+			grep -ih 'error\|warn\|assert\|clocks' "${files[@]::${#args[*]}}"
 		fi
-		iters+=( "$(sed -n 's/^Clocks = //p' "${files[@]::${#args[*]}}" | awk -F'[:.]' '{ sum+=1/((($1*60*60*1000)+($2*60*1000)+($3*1000)+$4)/1000) } END { printf "%.15g\n", 1000 * sum }')" )
+		times=( $(sed -n 's/^Clocks = //p' "${files[@]::${#args[*]}}" | awk -F'[:.]' '{ printf "%.15g\n", (($1*60*60*1000)+($2*60*1000)+($3*1000)+$4)/1000 }') )
+		throughput=$(printf '%s\n' "${times[@]}" | awk '{ sum+=1/$1 } END { printf "%.15g\n", 1000 * sum }')
+		echo
+		{
+			printf "Timings for %sK FFT length (%'d cores, %s threads, %'d workers): " "${ffts[j]}" "$CPU_CORES" "${THREADS[i]// /, }" ${#args[*]}
+			for k in "${!times[@]}"; do
+				if (( k )); then
+					printf ', '
+				fi
+				printf "%'5.2f" "${times[k]/./$decimal_point}"
+			done
+			printf " ms.  Throughput: %'5.3f iter/sec.\n" "${throughput/./$decimal_point}"
+		} | tee -a bench.txt
+		iters+=( "$throughput" )
 	done
 	ITERS+=( "$(printf '%s\n' "${iters[@]}")" )
 done
@@ -473,44 +489,46 @@ threads=( ${THREADS[MAX]} )
 for j in "${!threads[@]}"; do
 	ln -s "mlucas.${CORES:+${CORES[MAX]}c.}${threads[j]}t.$j.cfg" "mlucas.$j.cfg"
 done
-echo -e "\nSummary\n"
-echo -e "\tAdjusted msec/iter times (ms/iter) vs Actual iters/sec total throughput (iters/s) for each combination\n"
+echo -e "\nBenchmark Summary\n"
 {
-	printf 'FFT\t'
-	for i in "${!ARGS[@]}"; do
-		if [[ $i -gt 0 ]]; then
-			printf '\t \t'
-		fi
-		printf "#%'d" $((i+1))
-	done
-	echo
-	printf 'length\t'
-	for i in "${!ARGS[@]}"; do
-		printf 'ms/iter\titers/s\t'
-	done
-	echo
-	mapfile -t affts < <(printf '%s\n' "${FFTS[@]}" | sort -nu)
-	for k in "${!affts[@]}"; do
-		printf '%sK\t' "${affts[k]}"
-		for i in "${!ITERS[@]}"; do
-			mapfile -t ffts <<< "${FFTS[i]}"
-			iters=( ${ITERS[i]} )
-			times=( ${TIMES[i]} )
-			for ((j=k>=${#ffts[*]}?${#ffts[*]}-1:k; j>=0; --j)); do
-				if [[ ${affts[k]} -eq ${ffts[j]} ]]; then
-					break
-				fi
-			done
-			if [[ $j -ge 0 ]]; then
-				printf "%'g\t%'.3f\t" "${times[j]/./$decimal_point}" "${iters[j]/./$decimal_point}"
-			else
-				printf -- '-\t-\t'
+	echo -e "\tAdjusted msec/iter times (ms/iter) vs Actual iters/sec total throughput (iter/s) for each combination\n"
+	{
+		printf 'FFT\t'
+		for i in "${!ARGS[@]}"; do
+			if (( i )); then
+				printf '\t \t'
 			fi
+			printf "#%'d" $((i+1))
 		done
 		echo
-	done
-} | column -t -s $'\t'
-echo
+		printf 'length\t'
+		for i in "${!ARGS[@]}"; do
+			printf 'ms/iter\titer/s\t'
+		done
+		echo
+		mapfile -t affts < <(printf '%s\n' "${FFTS[@]}" | sort -nu)
+		for k in "${!affts[@]}"; do
+			printf '%sK\t' "${affts[k]}"
+			for i in "${!ITERS[@]}"; do
+				mapfile -t ffts <<< "${FFTS[i]}"
+				iters=( ${ITERS[i]} )
+				times=( ${TIMES[i]} )
+				for ((j=k>=${#ffts[*]}?${#ffts[*]}-1:k; j>=0; --j)); do
+					if [[ ${affts[k]} -eq ${ffts[j]} ]]; then
+						break
+					fi
+				done
+				if [[ $j -ge 0 ]]; then
+					printf "%'g\t%'.3f\t" "${times[j]/./$decimal_point}" "${iters[j]/./$decimal_point}"
+				else
+					printf -- '-\t-\t'
+				fi
+			done
+			echo
+		done
+	} | column -t -s $'\t'
+	echo
+} | tee -a bench.txt
 echo "Fastest combination"
 {
 	echo -e "#\tWorkers/Runs\tThreads\tFirst -cpu argument"
@@ -533,6 +551,8 @@ if [[ ${#ARGS[*]} -gt 1 ]]; then
 		done
 	} | column -t -s $'\t'
 fi
+echo
+echo "The benchmark summary table was written to the 'bench.txt' file"
 echo -e "\nRegistering computer with PrimeNet\n"
 python3 ../primenet.py -d -t 0 -T "$TYPE" -u "$USERID" --num_workers ${#RUNS[*]} -H "$COMPUTER" --frequency="$(if [[ -n "$CPU_FREQ" ]]; then printf "%.0f" "${CPU_FREQ/./$decimal_point}"; else echo "1000"; fi)" -m "$((TOTAL_PHYSICAL_MEM / 1024))" --np="$CPU_CORES" --hp="$HP"
 maxalloc=$(echo ${#RUNS[*]} | awk '{ printf "%g", 90 / $1 }')
@@ -579,7 +599,7 @@ cat << EOF > Mlucas.sh
 # Start Mlucas and the PrimeNet script if the computer has not been used in the specified idle time and stop it when someone uses the computer
 # Run: '$DIR'/Mlucas.sh
 
-if who -s | awk '{ print \$2 }' | (cd /dev && xargs -r stat -c '%U %X') | awk '{if ('"\${EPOCHSECONDS:-\$(date +%s)}"'-\$2<$TIME) { print \$1"\t"'"\${EPOCHSECONDS:-\$(date +%s)}"'-\$2; ++count }} END{if (count>0) { exit 1 }}' >/dev/null; then cd '$DIR' && ./jobs.sh; else pgrep -x Mlucas >/dev/null && killall -9 Mlucas; fi
+if who -s | awk '{ print \$2 }' | (cd /dev && xargs -r stat -c '%U %X') | awk '{if ('"\${EPOCHSECONDS:-\$(date +%s)}"'-\$2<$TIME) { print \$1"\t"'"\${EPOCHSECONDS:-\$(date +%s)}"'-\$2; ++count }} END{if (count>0) { exit 1 }}' >/dev/null; then cd '$DIR' && ./jobs.sh; else pgrep -x Mlucas >/dev/null && killall Mlucas; fi
 EOF
 chmod +x Mlucas.sh
 echo -e "\nRun this command for it to start if the computer has not been used in the specified idle time and stop it when someone uses the computer:\n"

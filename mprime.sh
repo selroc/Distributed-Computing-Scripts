@@ -7,8 +7,8 @@
 # ./mprime.sh ANONYMOUS
 
 DIR="mprime"
-FILE="p95v303b6.linux64.tar.gz"
-SUM="EE54B56062FEB05C9F80963A4E3AE8555D0E59CA60DDBCBA65CE05225C9B9A79"
+FILE="p95v307b9.linux64.tar.gz"
+SUM="d47d766c734d1cca4521cf7b37c1fe351c2cf1fbe5b7c70c457061a897a5a380"
 if [[ $# -gt 4 ]]; then
 	echo "Usage: $0 [PrimeNet User ID] [Computer name] [Type of work] [Idle time to run (mins)]" >&2
 	exit 1
@@ -17,7 +17,7 @@ USERID=${1:-$USER}
 COMPUTER=${2:-$HOSTNAME}
 TYPE=${3:-150}
 TIME=${4:-10}
-RE='^([024568]|1(0[0124]|5[0123]|6[01])?)$'
+RE='^([024568]|1(0[0124]|5[012345]|6[01])?)$'
 if ! [[ $TYPE =~ $RE ]]; then
 	echo "Usage: [Type of work] is not a valid number" >&2
 	exit 1
@@ -60,7 +60,7 @@ cd "$DIR"
 DIR=$PWD
 echo -e "Downloading Prime95\n"
 wget https://www.mersenne.org/ftp_root/gimps/$FILE
-if [[ "$(sha256sum $FILE | head -c 64 | tr 'a-z' 'A-Z')" != "$SUM" ]]; then
+if [[ "$(sha256sum $FILE | head -c 64)" != "$SUM" ]]; then
 	echo "Error: sha256sum does not match" >&2
 	echo "Please run \"rm -r $DIR\" make sure you are using the latest version of this script and try running it again" >&2
 	echo "If you still get this error, please create an issue: https://github.com/tdulcet/Distributed-Computing-Scripts/issues" >&2
@@ -68,6 +68,8 @@ if [[ "$(sha256sum $FILE | head -c 64 | tr 'a-z' 'A-Z')" != "$SUM" ]]; then
 fi
 echo -e "\nDecompressing the files\n"
 tar -xzvf $FILE
+echo -e "\nOptimizing Prime95 for your computer\nThis may take a while…\n"
+./mprime -b
 echo -e "\nSetting up Prime95\n"
 if [[ -e ../mprime.exp ]]; then
 	cp ../mprime.exp .
